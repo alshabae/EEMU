@@ -1,11 +1,7 @@
-from collections import defaultdict
-from email.policy import default
+from random import random
 from tqdm import tqdm
-import json
 import numpy as np
 import scipy.sparse
-from random import shuffle
-
 
 class InteractionGraph:
     def __init__(self, user_data, item_data, interactions) -> None:
@@ -15,17 +11,30 @@ class InteractionGraph:
         self.train_edges, self.validation_edges, self.test_edges = [], [], []
         self.adj_matrix: scipy.sparse.dok_matrix = None
 
+        self.all_item_ids = sorted(list(self.item_data.keys()))
+        self.item_reindexer = {}
+        for item_id in self.all_item_ids:
+            self.item_reindexer[item_id] = len(self.item_reindexer)
+
+        self.reverse_item_indexer = {v : k for k, v in self.item_reindexer.items()}
+
     def split_statistics(self):
         training_items = set(self.train_edges[:, 1])
         validation_items = set(self.validation_edges[:, 1])
         test_items = set(self.test_edges[:, 1])
 
+        print("Total number of training edges = {}".format(len(self.train_edges)))
         print("Total number of items = {}".format(len(self.item_data)))
+        print("Total number of users = {}".format(len(self.user_data)))
         print("Number of items present across training edges = {}".format(len(training_items)))
         print("Number of items present across val edges = {}".format(len(validation_items)))
         print("Number of items present across test edges = {}".format(len(test_items)))
         print("Average item degree = {}".format(np.mean(self.item_degrees)))
         print("Average user degree = {}".format(np.mean(self.user_degrees)))
+        print("min item degree = {}".format(np.min(self.item_degrees)))
+        print("min user degree = {}".format(np.min(self.user_degrees)))
+        print("max item degree = {}".format(np.max(self.item_degrees)))
+        print("max user degree = {}".format(np.max(self.user_degrees)))
 
         train_val_common_items = training_items.intersection(validation_items)
         train_test_common_items = training_items.intersection(test_items)
@@ -62,22 +71,6 @@ class InteractionGraph:
         cold_items = np.argsort(self.item_degrees)[:int((1 - warm_threshold) * len(self.item_degrees))] + self.start_item_id
         self.is_cold[cold_items] = True
 
-
-        self.cold_item_idxs = self.is_cold[self.start_item_id:].nonzero()[0] + self.start_item_id
-        self.cold_item_degrees = self.item_degrees[self.cold_item_idxs - self.start_item_id]
-        self.max_cold_item_degree = self.cold_item_degrees.max()
-        self.min_cold_item_degree = self.cold_item_degrees.min()
-
-        self.warm_item_idxs = (~self.is_cold[self.start_item_id:]).nonzero()[0] + self.start_item_id
-        self.warm_item_degrees = self.item_degrees[self.warm_item_idxs - self.start_item_id]
-        self.min_warm_item_degree = self.warm_item_degrees.min()
-        self.max_warm_item_degree = self.warm_item_degrees.max()
-
-        self.cmap = -1 * np.ones((self.adj_matrix.shape[0]), dtype=float)
-        self.cmap[self.cold_item_idxs] = (self.cold_item_degrees - self.min_cold_item_degree) / (2 * (self.max_cold_item_degree - self.min_cold_item_degree))
-        self.cmap[self.warm_item_idxs] =  0.5 + ((self.warm_item_degrees - self.min_warm_item_degree) / (2 * (self.max_warm_item_degree - self.min_warm_item_degree)))
-        
-
     def __getitem__(self, user_id):
         assert user_id < len(self.user_data), "User ID out of bounds"
         assert isinstance(self.adj_matrix, scipy.sparse.csr_matrix), "Bipartite graph not created: must call create_bipartite_graph first"
@@ -87,14 +80,43 @@ class InteractionGraph:
         raise NotImplementedError()
     
 
-class MovielensInteractionGraph(InteractionGraph):
-    def __init__(self, user_data, item_data, interactions, warm_threshold=0.2) -> None:
+class MlInteractionGraph(InteractionGraph):
+    def __init__(self, user_data, item_data, interactions, warm_threshold=0.2, mfv_ratio=0.0, num_shards=10, query_set_length=3, heuristic_sample_size=1, heuristic="other_shards_query") -> None:
         super().__init__(user_data, item_data, interactions)
         self.create_data_split()
         self.create_bipartite_graph()
         assert (warm_threshold < 1.0 and warm_threshold > 0.0)
         self.warm_threshold = warm_threshold
         self.compute_tail_distribution()
+        self.split_statistics()
+
+        self.num_shards = num_shards
+        self.query_set_length = query_set_length
+        self.heuristic_sample_size = heuristic_sample_size
+        self.heuristic = heuristic
+        self.shard_train_edges_per_user((self.num_shards))
+
+        self.mfv_ratio = mfv_ratio
+        if self.mfv_ratio > 0.0:
+            self.hide_user_features()
+    
+    def hide_user_features(self):
+        user_ids = list(self.user_data.keys())
+        random.shuffle(user_ids)
+        mfv_user_ids = user_ids[:int(self.mfv_ratio) * len(user_ids)]
+        for user_id in mfv_user_ids:
+            hide_gender = random.randint(0, 1)
+            hide_age = random.randint(0, 1)
+            hide_occ = random.randint(0, 1)
+
+            if hide_gender:
+                self.user_data[user_id]['gender'] = -1
+
+            if hide_age:
+                self.user_data[user_id]['age'] = -1
+
+            if hide_occ:
+                self.user_data[user_id]['occupation'] = -1
     
     def create_data_split(self):
         # Leave one out validation - for each user the latest interaction is a test item and the second latest item is the validation item
@@ -121,128 +143,42 @@ class MovielensInteractionGraph(InteractionGraph):
         self.validation_edges = np.array(self.validation_edges)
         self.test_edges = np.array(self.test_edges)
     
-    def compute_tail_distribution(self):
-        return super().compute_tail_distribution(self.warm_threshold)
-
-    def create_json_files(self):
-        warm_state = defaultdict(list)
-        warm_state_y = defaultdict(list)
-        item_cold_state_val = defaultdict(list)
-        item_cold_state_val_y = defaultdict(list)
-        item_warm_state_val = defaultdict(list)
-        item_warm_state_val_y = defaultdict(list)
-        item_cold_state_test = defaultdict(list)
-        item_cold_state_test_y = defaultdict(list)
-        item_warm_state_test = defaultdict(list)
-        item_warm_state_test_y = defaultdict(list)
-
-        for user_id in tqdm(self.interactions):
-            sorted_interactions = sorted(self.interactions[user_id], key=lambda x : x[2])
-            # Add val item
-            original_user_id = sorted_interactions[-2][3]
-            original_item_id = sorted_interactions[-2][4]
-            reindexed_item_id = sorted_interactions[-2][0]
-            rating = sorted_interactions[-2][1]
-
-            if self.is_cold[reindexed_item_id]:
-                item_cold_state_val[str(original_user_id)].append(str(original_item_id))
-                item_cold_state_val_y[str(original_user_id)].append(rating)
-            else:
-                item_warm_state_val[str(original_user_id)].append(str(original_item_id))
-                item_warm_state_val_y[str(original_user_id)].append(rating)
-
-            # Add test item
-            original_user_id = sorted_interactions[-1][3]
-            original_item_id = sorted_interactions[-1][4]
-            reindexed_item_id = sorted_interactions[-1][0]
-            rating = sorted_interactions[-1][1]
-
-            if self.is_cold[reindexed_item_id]:
-                item_cold_state_test[str(original_user_id)].append(str(original_item_id))
-                item_cold_state_test_y[str(original_user_id)].append(rating)
-            else:
-                item_warm_state_test[str(original_user_id)].append(str(original_item_id))
-                item_warm_state_test_y[str(original_user_id)].append(rating)               
-
-            for interaction in sorted_interactions[:-2]:
-                original_user_id = interaction[3]
-                original_item_id = interaction[4]
-                rating = interaction[1]
-                warm_state[str(original_user_id)].append(str(original_item_id))
-                warm_state_y[str(original_user_id)].append(rating)
-        
-        with open("warm_state.json", "w") as f:
-            json.dump(warm_state, f)
-
-        with open("warm_state_y.json", "w") as f:
-            json.dump(warm_state_y, f)
-
-        with open("item_warm_state_val.json", "w") as f:
-            json.dump(item_warm_state_val, f)
-        
-        with open("item_warm_state_val_y.json", "w") as f:
-            json.dump(item_warm_state_val_y, f)
-        
-        with open("item_cold_state_val.json", "w") as f:
-            json.dump(item_cold_state_val, f)
-        
-        with open("item_cold_state_val_y.json", "w") as f:
-            json.dump(item_cold_state_val_y, f)
-
-        with open("item_warm_state_test.json", "w") as f:
-            json.dump(item_warm_state_test, f)
-        
-        with open("item_warm_state_test_y.json", "w") as f:
-            json.dump(item_warm_state_test_y, f)
-        
-        with open("item_cold_state_test.json", "w") as f:
-            json.dump(item_cold_state_test, f)
-        
-        with open("item_cold_state_test_y.json", "w") as f:
-            json.dump(item_cold_state_test_y, f)
-
-
-class BookCrossingInteractionGraph(InteractionGraph):
-    def __init__(self, user_data, item_data, interactions, warm_threshold=0.001) -> None:
-        super().__init__(user_data, item_data, interactions)
-        self.create_data_split()
-        self.create_bipartite_graph()
-        assert (warm_threshold < 1.0 and warm_threshold > 0.0)
-        self.warm_threshold = warm_threshold
-        self.compute_tail_distribution()
-
-
-    def create_data_split(self):
+    def create_data_split_v2(self):
         print('Creating data split')
         self.all_edges = set()
-        self.interaction_time_stamps = None
+        self.interaction_time_stamps = {}
         for user_id in tqdm(self.interactions):
-            if len(self.interactions[user_id]) < 3:
-                train_edges = [[user_id, interaction[0]] for interaction in self.interactions[user_id]]
-                for interaction in self.interactions[user_id]:
-                    self.all_edges.add((user_id, interaction[0]))
-            else:
-                shuffle(self.interactions[user_id])
-                test_edge = [user_id, self.interactions[user_id][0][0]]
-                val_edge = [user_id, self.interactions[user_id][1][0]]
-                self.all_edges.add((user_id, self.interactions[user_id][1][0]))
+            sorted_interactions = sorted(self.interactions[user_id], key=lambda x : x[2])
+            num_test_interactions = int(0.1 * len(sorted_interactions))
 
-                train_edges = [[user_id, interaction[0]] for interaction in self.interactions[user_id][2:]]
-                for interaction in self.interactions[user_id][2:]:
-                    self.all_edges.add((user_id, interaction[0])) 
-                
-                self.validation_edges.append(val_edge)
-                self.test_edges.append(test_edge)
-
-            self.train_edges += train_edges
+            for interaction in sorted_interactions[:-num_test_interactions]:
+                self.all_edges.add((user_id, interaction[0]))
+                self.train_edges.append([user_id, interaction[0]])
+                self.interaction_time_stamps[(user_id, interaction[0])] = interaction[2]
+                self.interaction_time_stamps[(interaction[0], user_id)] = interaction[2]
             
+            for interaction in sorted_interactions[-num_test_interactions:]:
+                self.test_edges.append([user_id, interaction[0]])
+
         
         self.train_edges = np.array(self.train_edges)
         self.validation_edges = np.array(self.validation_edges)
         self.test_edges = np.array(self.test_edges)
 
+    
     def compute_tail_distribution(self):
         return super().compute_tail_distribution(self.warm_threshold)
+    
+    def shard_train_edges_per_user(self, num_shards):
+        self.edges_per_user = {}
+        for k, v in self.train_edges:
+            self.edges_per_user.setdefault(k, []).append((k,v))
 
-
-
+        self.shards_per_user = {}
+        for k in self.edges_per_user.keys():
+            user_edges = np.array(self.edges_per_user[k])
+            np.random.shuffle(user_edges)
+            user_shards = np.array_split(user_edges, num_shards)
+            user_shards_support_query = [[shard[:-self.query_set_length], shard[-self.query_set_length:]] for shard in user_shards]
+            self.shards_per_user[k] = user_shards_support_query
+    

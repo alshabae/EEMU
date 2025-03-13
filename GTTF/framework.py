@@ -33,11 +33,10 @@ class CompactAdj:
             next_nodes = []
             for node in flat_batch:
                 distribution = probs[node]
-                replacement = num_neighbors > distribution.shape[0]
-                sampled = torch.multinomial(torch.tensor(distribution), num_neighbors, replacement=replacement).numpy()
+                sampled = torch.multinomial(torch.tensor(distribution), num_neighbors).numpy()
                 nexts = self[node][sampled]
+                ordered_timestaps = np.argsort(self.edge_lccsr.get_timestamps(node)[sampled])
                 if order:
-                    ordered_timestaps = np.argsort(self.edge_lccsr.get_timestamps(node)[sampled])
                     nexts = nexts[ordered_timestaps]
 
                 next_nodes.append(nexts)

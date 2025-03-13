@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from model.common import MLP
 
-class NeighborAveragingSetRepresentationModel(nn.Module):
-    def __init__(self, user_embed_dim: int, item_embed_dim: int, set_embedding_dim: int, hidden_dims: List[int], act='gelu'):
-        super(NeighborAveragingSetRepresentationModel, self).__init__()
-        self.dims = [user_embed_dim + item_embed_dim] + hidden_dims + [set_embedding_dim]
+class MeanSynthesis(nn.Module):
+    def __init__(self, user_feat_dim: int, item_embed_dim: int, user_embed_dim: int, hidden_dims: List[int], act='gelu'):
+        super(MeanSynthesis, self).__init__()
+        self.dims = [user_feat_dim + item_embed_dim] + hidden_dims + [user_embed_dim]
         self.mlp = MLP(self.dims, apply_layernorm=True, act=act, elemwise_affine=True)
 
     def forward(self, user_embeddings: torch.Tensor, neighbor_item_embeddings: torch.Tensor) -> torch.Tensor:
@@ -22,21 +22,21 @@ class NeighborAveragingSetRepresentationModel(nn.Module):
         return self.mlp(combined_embeds)
 
 
-class MultiHeadAttentionSetRepresentationModel(nn.Module):
-    def __init__(self, user_embed_dim: int, item_embed_dim: int, projection_dim: int, set_embedding_dim: int, hidden_dims: List[int], num_heads: int=1, act='gelu'):
-        super(MultiHeadAttentionSetRepresentationModel, self).__init__()
-        self.d_u = user_embed_dim
+class UserAttentionSynthesis(nn.Module):
+    def __init__(self, user_feat_dim: int, item_embed_dim: int, projection_dim: int, user_embed_dim: int, hidden_dims: List[int], num_heads: int=1, act='gelu'):
+        super(UserAttentionSynthesis, self).__init__()
+        self.d_u = user_feat_dim
         self.d_i = item_embed_dim
         self.num_heads = num_heads
         self.projection_dim = projection_dim
 
         # Multihead attention parameters
-        self.Q_w = nn.Linear(user_embed_dim, num_heads * projection_dim, bias=False)
+        self.Q_w = nn.Linear(user_feat_dim, num_heads * projection_dim, bias=False)
         self.K_w = nn.Linear(item_embed_dim, num_heads * projection_dim, bias=False)
         self.mha_fc = nn.Linear(num_heads * item_embed_dim, num_heads * item_embed_dim)
 
         # User-Neighborhood combination parameters
-        self.dims = [user_embed_dim + (num_heads * item_embed_dim)] + hidden_dims + [set_embedding_dim]
+        self.dims = [user_feat_dim + (num_heads * item_embed_dim)] + hidden_dims + [user_embed_dim]
         self.mlp = MLP(self.dims, apply_layernorm=True, elemwise_affine=True, act=act)
     
     def forward(self, user_embeddings: torch.Tensor, neighbor_item_embeddings: torch.Tensor) -> torch.Tensor:
@@ -70,16 +70,16 @@ class MultiHeadAttentionSetRepresentationModel(nn.Module):
         return self.mlp(combined_embeds)
 
 
-class RecurrentSetRepresentationModel(nn.Module):
+class RecurrentSynthesis(nn.Module):
     def __init__(self, seq_len: int,
-                       user_embed_dim: int, 
+                       user_feat_dim: int, 
                        item_embed_dim: int, 
                        hidden_size: int, 
                        num_layers: int, 
-                       set_embedding_dim: int, hidden_dims: List[int], act='gelu', mode='gru'):
-        super(RecurrentSetRepresentationModel, self).__init__()
+                       user_embed_dim: int, hidden_dims: List[int], act='gelu', mode='gru'):
+        super(RecurrentSynthesis, self).__init__()
         self.seq_len = seq_len
-        self.d_u = user_embed_dim
+        self.d_u = user_feat_dim
         self.d_i = item_embed_dim
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -92,7 +92,7 @@ class RecurrentSetRepresentationModel(nn.Module):
 
 
         # User-Neighborhood combination parameters
-        self.dims = [(seq_len * hidden_size) + user_embed_dim] + hidden_dims + [set_embedding_dim]
+        self.dims = [(seq_len * hidden_size) + user_feat_dim] + hidden_dims + [user_embed_dim]
         self.mlp = MLP(self.dims, apply_layernorm=True, elemwise_affine=True, act=act)
     
     def forward(self, user_embeddings: torch.Tensor, neighbor_item_embeddings: torch.Tensor) -> torch.Tensor:

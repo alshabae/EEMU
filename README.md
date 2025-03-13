@@ -1,6 +1,6 @@
-# BiasedUserHistorySynthesis
+# EEMU
 
-Source for Biased User History Synthesis for Personalized Long Tail Item Recommendation
+Source for "Meta-Learn to Unlearn: Enhanced Exact Machine Unlearning in Recommendation Systems with Meta-Learning"
 
 ## Create the conda environment
 
@@ -11,27 +11,13 @@ python3 -m pip install -r requirements.txt
 
 ## Downloading the datasets
 
-We use two public benchmark datasets: [MovieLens1m](https://grouplens.org/datasets/movielens/1m/) and [BookCrossing](http://www2.informatik.uni-freiburg.de/~cziegler/BX/). Download the datasets into a datasets subdirectory as follows: PATH/TO/DATASETS_DIR/ml-1m and PATH/TO/DATASETS/BookCrossing, and subsequently seting the following environment variable:
+We use public benchmark datasets including: [MovieLens1m](https://grouplens.org/datasets/movielens/1m/). Download the datasets into a datasets subdirectory as follows: PATH/TO/DATASETS_DIR/ml-1m, and subsequently seting the following environment variable:
 
 export DATASETS_DIR=PATH/TO/DATASETS
 
-
 ## Reproducing Results
 
-The default branch of this repository is called **BaseModel**. It contains the code for the Two Tower Neural Network Base Recommendation System. The other branch in this repository is called **BiasedUserHistorySynthesis**. It contains the code for BiasedUserHistorySynthesis built on top of a Two Tower Neural Network. The main results in the paper for the Base Model and all variants of BiasedUserHistorySynthesis can be reproduced by running the following shell scripts:
+The main results in the paper for for EEMU can be reproduced by running the following command:
 
-| Dataset | Model | Command |
-| ------- | ----- | ------- |
-| MovieLens-1m | Base Two Tower Neural Network | bash ml1m_ttnn_basemodel.sh |
-| MovieLens-1m | BUHS-Mean + TTNN | bash ml1m_ttnn_buhs_mean.sh |
-| MovieLens-1m | BUHS-Attn + TTNN | bash ml1m_ttnn_buhs_attn.sh |
-| MovieLens-1m | BUHS-GRU + TTNN | bash ml1m_ttnn_buhs_gru.sh |
-| BookCrossing | Base Two Tower Neural Network | bash bx_ttnn_basemodel.sh |
-| BookCrossing | BUHS-Mean + TTNN | bash bx_ttnn_buhs_mean.sh |
-| BookCrossing | BUHS-Mean + TTNN | bash bx_ttnn_buhs_attn.sh |
-| BookCrossing | BUHS-Mean + TTNN | bash bx_ttnn_buhs_gru.sh |
-
-
-
-
+TOKENIZERS_PARALLELISM=false torchrun --rdzv_backend=c10d --rdzv_endpoint=localhost:0 --nnodes=1 --nproc_per_node=8 main.py --dataset=ml1m --device=gpu --batch_size=32 --print_freq=16 --lr=2e-4 --epochs=100 --margin=1 --warm_threshold=0.2 --num_workers=6 --feat_embed_dim=96 --user_embed_hidden_dims=512,256,128,64 --item_embed_hidden_dims=256,128,64 --usable_user_feats=id,occ,age,gender --k=10 --num_shards=8 --query_set_length=1 --heuristic_sample_size=7 --heuristic=all_biased_sample --dataset_dir=DATASETS_DIR
 

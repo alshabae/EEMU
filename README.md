@@ -21,3 +21,6 @@ The main results in the paper for for EEMU can be reproduced by running the foll
 
 TOKENIZERS_PARALLELISM=false torchrun --rdzv_backend=c10d --rdzv_endpoint=localhost:0 --nnodes=1 --nproc_per_node=8 main.py --dataset=ml1m --device=gpu --batch_size=32 --print_freq=16 --lr=2e-4 --epochs=100 --margin=1 --warm_threshold=0.2 --num_workers=6 --feat_embed_dim=96 --user_embed_hidden_dims=512,256,128,64 --item_embed_hidden_dims=256,128,64 --usable_user_feats=id,occ,age,gender --k=10 --num_shards=8 --query_set_length=1 --heuristic_sample_size=7 --heuristic=all_biased_sample --dataset_dir=DATASETS_DIR
 
+## Hardware Requiremnts
+
+The code is designed to run on multiple GPUs, with one GPU required per shard in your experiment. The training time for all shards in a single epoch depends on the dataset, but typically takes a few minutes on a desktop-class GPU. The code has been tested on a machine with over 100GB of RAM, which allows data loading to be efficient.
